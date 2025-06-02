@@ -1,0 +1,46 @@
+type: vertical-stack
+cards:
+  - type: entities
+    title: Windows Process API Control
+    entities:
+      - entity: sensor.windows_process_api_health
+        name: API Status
+      - entity: sensor.windows_process_api_stats
+        name: Total Requests
+    show_header_toggle: false
+  - type: horizontal-stack
+    cards:
+      - type: button
+        tap_action:
+          action: call-service
+          service: rest_command.kill_bitcrack_processes
+        entity: sensor.windows_process_api_health
+        name: Kill BitcrackRandomiser
+        icon: mdi:stop-circle
+        show_state: false
+      - type: button
+        tap_action:
+          action: call-service
+          service: rest_command.kill_vanitysearch_processes
+        entity: sensor.windows_process_api_health
+        name: Kill VanitySearch
+        icon: mdi:stop-circle
+        show_state: false
+      - type: button
+        tap_action:
+          action: call-service
+          service: rest_command.start_bitcrack_shortcut
+        entity: sensor.windows_process_api_health
+        name: Start BitcrackRandomiser
+        icon: mdi:play-circle
+        show_state: false
+  - type: markdown
+    content: >
+      ## Automation Schedule
+
+      - **01:00 Uhr**: Prozesse beenden (BitcrackRandomiser.exe,
+      vanitysearch.exe)
+
+      - **03:00 Uhr**: BitcrackRandomiser.exe über Autostart-Verknüpfung starten
+
+      **Letzte Aktualisierung**: {{ states('sensor.date_time') }}
