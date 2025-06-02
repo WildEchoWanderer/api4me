@@ -1,0 +1,54 @@
+sensor:
+  - platform: rest   # REST Sensor für API-Status
+    resource: http://win-machine-ip:8080/health  # Ersetze X mit der IP deines Windows-Rechners
+    name: "Windows Process API Health"
+    value_template: >
+      {% if value_json is defined and value_json.status is defined %}
+        {{ value_json.status }}
+      {% else %}
+        not healthy
+      {% endif %}
+    json_attributes:
+      - uptime_seconds
+      - version
+      - features
+    scan_interval: 60
+  - platform: rest   # REST Sensor für detaillierte Statistiken (benötigt Authentifizierung)
+    resource: http://win-machine-ip:8080/status  # Ersetze X mit der IP deines Windows-Rechners
+    name: "Windows Process API Stats"
+    headers:
+      Authorization: "Bearer your-api-key"  # Ersetze mit deinem echten Token
+    value_template: "{{ value_json.statistics.total_requests }}"
+    json_attributes:
+      - server_info
+      - statistics
+      - configuration
+    scan_interval: 300  # Alle 5 Minuten
+
+rest_command: #für Steuerung von Win-Server
+  kill_bitcrack_processes:
+    url: "http://win-machine-ip:8080/kill-process"  # Ersetze X mit der IP deines Windows-Rechners
+    method: POST
+    headers:
+      Authorization: "Bearer your-api-key"  # Ersetze mit deinem echten Token
+      Content-Type: "application/json"
+    payload: '{"process_name": "BitcrackRandomiser.exe"}'
+    timeout: 30
+
+  kill_vanitysearch_processes:
+    url: "http://win-machine-ip:8080/kill-process"  # Ersetze X mit der IP deines Windows-Rechners
+    method: POST
+    headers:
+      Authorization: "Bearer your-api-key"  # Ersetze mit deinem echten Token
+      Content-Type: "application/json"
+    payload: '{"process_name": "vanitysearch.exe"}'
+    timeout: 30
+
+  start_bitcrack_shortcut:
+    url: "http://win-machine-ip:8080/start-direct"  # Ersetze X mit der IP deines Windows-Rechners
+    method: POST
+    headers:
+      Authorization: "Bearer your-api-key"  # Ersetze mit deinem echten Token
+      Content-Type: "application/json"
+    payload: '{"program_name": "BitcrackRandomiser.exe"}'
+    timeout: 30
