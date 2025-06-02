@@ -1,0 +1,34 @@
+# Automations für zeitgesteuerte Ausführung
+automation:
+  - alias: "Nightly Process Termination"   # Automation 1: Prozesse um 01:00 beenden
+    description: "Beendet BitcrackRandomiser.exe und vanitysearch.exe um 01:00"
+    trigger:
+      - platform: time
+        at: "01:00:00"
+    condition: []
+    action:
+      - service: rest_command.kill_bitcrack_processes
+        data: {}
+      - delay: "00:00:02"  # Kurze Pause zwischen den Befehlen
+      - service: rest_command.kill_vanitysearch_processes
+        data: {}
+      - service: notify.persistent_notification
+        data:
+          title: "Process API"
+          message: "Nightly process termination completed at {{ now().strftime('%H:%M:%S') }}"
+    mode: single
+
+  - alias: "Early Morning Process Start" # Automation 2: Programm um 03:00 starten
+    description: "Startet BitcrackRandomiser.exe um 03:00 über Autostart-Verknüpfung"
+    trigger:
+      - platform: time
+        at: "03:00:00"
+    condition: []
+    action:
+      - service: rest_command.start_bitcrack_shortcut
+        data: {}
+      - service: notify.persistent_notification
+        data:
+          title: "Process API"
+          message: "BitcrackRandomiser.exe started at {{ now().strftime('%H:%M:%S') }}"
+    mode: single
