@@ -30,7 +30,7 @@ import sys
 import ipaddress
 
 # Configuration constants - Diese können über Umgebungsvariablen überschrieben werden
-API_SECRET_TOKEN = os.getenv("API_SECRET_TOKEN", "CMSPNZpsDxK0aawU2qwC-5HTZglfMUcFb733eAkhw2s")
+API_SECRET_TOKEN = os.getenv("API_SECRET_TOKEN", "YOUR_API_KEY")
 ALLOWED_TERMINATION_PROCESSES = os.getenv("ALLOWED_TERMINATION_PROCESSES", "BitcrackRandomiser.exe,vanitysearch.exe,process.exe").split(",")
 ALLOWED_START_PROGRAMS = os.getenv("ALLOWED_START_PROGRAMS", "BitcrackRandomiser.exe").split(",")
 ALLOWED_IPS = os.getenv("ALLOWED_IPS", "192.168.178.10,127.0.0.1").split(",")
