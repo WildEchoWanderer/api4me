@@ -1,18 +1,19 @@
-# Windows Process API Server - Enhanced Version
-# Erweiterte Version für direkte BitcrackRandomiser.exe Ausführung
-
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 r"""
              _   ___                
             (_) /   |               
   __ _ _ __  _ / /| |_ __ ___   ___ 
  / _` | '_ \| / /_| | '_ ` _ \ / _ \
 | (_| | |_) | \___  | | | | | |  __/
- \__,_| .__/|_|   |_/_| |_| |_|\___|
+ \__,_| .__/|_|   |_/_| |_| |_|\___| 
       | |                           
       |_|
 
-Windows Process API Server v2.0
+Windows Process API Server v2.1
+================================
 Sichere HTTP-API für Prozesssteuerung
+- Erweitert um Prozess-Duplikation-Schutz
 """
 
 import os
@@ -29,10 +30,10 @@ import sys
 import ipaddress
 
 # Configuration constants - Diese können über Umgebungsvariablen überschrieben werden
-API_SECRET_TOKEN = os.getenv("API_SECRET_TOKEN", "YOUR_API_KEY")
+API_SECRET_TOKEN = os.getenv("API_SECRET_TOKEN", "CMSPNZpsDxK0aawU2qwC-5HTZglfMUcFb733eAkhw2s")
 ALLOWED_TERMINATION_PROCESSES = os.getenv("ALLOWED_TERMINATION_PROCESSES", "BitcrackRandomiser.exe,vanitysearch.exe,process.exe").split(",")
 ALLOWED_START_PROGRAMS = os.getenv("ALLOWED_START_PROGRAMS", "BitcrackRandomiser.exe").split(",")
-ALLOWED_IPS = os.getenv("ALLOWED_IPS", "Homeassistant-IP,127.0.0.1").split(",")
+ALLOWED_IPS = os.getenv("ALLOWED_IPS", "192.168.178.10,127.0.0.1").split(",")
 
 # NEU: Direkter Pfad zur BitcrackRandomiser.exe
 BITCRACK_EXE_PATH = os.getenv("BITCRACK_EXE_PATH", r"C:\Users\Miner\bitcrackrandomiser\BitcrackRandomiser.exe")
@@ -64,17 +65,47 @@ statistics = {
     "failed_requests": 0,
     "process_kills": 0,
     "process_starts": 0,
-    "unauthorized_attempts": 0
+    "unauthorized_attempts": 0,
+    "duplicate_prevention_blocks": 0  # NEU: Zähler für verhinderte Duplikate
 }
 
 # Initialize Flask app
 app = Flask(__name__)
 
+def is_process_running(process_name):
+    """
+    NEU: Überprüft, ob ein Prozess mit dem gegebenen Namen bereits läuft
+
+    Args:
+        process_name (str): Der Name des zu überprüfenden Prozesses (z.B. 'BitcrackRandomiser.exe')
+
+    Returns:
+        tuple: (bool, list) - Bool gibt an, ob der Prozess läuft, die Liste enthält alle PIDs
+    """
+    running_pids = []
+
+    try:
+        # Alle laufenden Prozesse durchgehen
+        for proc in psutil.process_iter(['pid', 'name']):
+            try:
+                # Vergleiche den Prozessnamen (case-insensitive)
+                if proc.info['name'].lower() == process_name.lower():
+                    running_pids.append(proc.info['pid'])
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                # Prozesse, die während der Iteration verschwinden oder nicht zugänglich sind
+                pass
+
+        # True zurückgeben, wenn mindestens ein passender Prozess gefunden wurde
+        return len(running_pids) > 0, running_pids
+    except Exception as e:
+        logger.error(f"Error checking if process {process_name} is running: {e}")
+        return False, []
+
 def verify_auth_token(auth_header):
     """Verify the authorization token in the request header"""
     if not auth_header or not auth_header.startswith('Bearer '):
         return False
-    
+
     token = auth_header.split('Bearer ')[1].strip()
     # Use constant time comparison to prevent timing attacks
     return hmac.compare_digest(token, API_SECRET_TOKEN)
@@ -83,7 +114,7 @@ def is_ip_allowed(ip):
     """Check if the IP is in the allowed list"""
     if not ip:
         return False
-    
+
     try:
         client_ip = ipaddress.ip_address(ip)
         for allowed_ip in ALLOWED_IPS:
@@ -104,10 +135,10 @@ def validate_request():
     # Skip validation for health endpoint
     if request.path == '/health':
         return None
-    
+
     # Get client IP (consider X-Forwarded-For for proxied requests)
     client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-    
+
     # IP whitelist check
     if not is_ip_allowed(client_ip):
         security_logger.warning(f"Unauthorized access attempt from {client_ip} to {request.path}")
@@ -121,8 +152,8 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "uptime_seconds": uptime.total_seconds(),
-        "version": "2.0.0",
-        "features": ["process_management", "security", "monitoring", "gui_support"]
+        "version": "2.1.0",
+        "features": ["process_management", "security", "monitoring", "gui_support", "duplicate_prevention"]
     })
 
 @app.route('/status', methods=['GET'])
@@ -137,11 +168,21 @@ def status():
         return jsonify({"error": "Unauthorized"}), 401
 
     uptime = datetime.now() - start_time
-    
+
     # Get system information
     memory = psutil.virtual_memory()
     cpu_percent = psutil.cpu_percent(interval=0.1)
-    
+
+    # NEU: Zeige aktuell laufende Prozesse von Interesse
+    process_status = {}
+    for process_name in ALLOWED_START_PROGRAMS:
+        is_running, pids = is_process_running(process_name)
+        process_status[process_name] = {
+            "running": is_running,
+            "pids": pids,
+            "count": len(pids)
+        }
+
     # Prepare response
     response = {
         "server_info": {
@@ -161,10 +202,11 @@ def status():
             "allowed_termination_processes": ALLOWED_TERMINATION_PROCESSES,
             "allowed_start_programs": ALLOWED_START_PROGRAMS,
             "allowed_ips": ALLOWED_IPS,
-            "bitcrack_exe_path": BITCRACK_EXE_PATH  # NEU: Zeigt den konfigurierten Pfad
-        }
+            "bitcrack_exe_path": BITCRACK_EXE_PATH
+        },
+        "process_status": process_status  # NEU: Aktuelle Prozessstatus
     }
-    
+
     return jsonify(response)
 
 @app.route('/kill-process', methods=['POST'])
@@ -180,7 +222,7 @@ def kill_process():
 
     start_request_time = time.time()
     data = request.json
-    
+
     if not data or 'process_name' not in data:
         statistics["total_requests"] += 1
         statistics["failed_requests"] += 1
@@ -206,32 +248,32 @@ def kill_process():
             if proc.info['name'].lower() == process_name.lower():
                 pid = proc.info['pid']
                 logger.info(f"Terminating process {process_name} with PID {pid}")
-                
+
                 # Terminate the process
                 process = psutil.Process(pid)
                 process.terminate()
-                
+
                 # Wait for process to terminate, kill if it doesn't respond
                 try:
                     process.wait(timeout=3)
                 except psutil.TimeoutExpired:
                     logger.warning(f"Process {pid} did not terminate gracefully, killing it")
                     process.kill()
-                
+
                 terminated_count += 1
                 terminated_pids.append(pid)
-                
+
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as e:
             logger.error(f"Error terminating process: {e}")
 
     # Update statistics
     statistics["total_requests"] += 1
     statistics["process_kills"] += terminated_count
-    
+
     if terminated_count > 0:
         statistics["successful_requests"] += 1
         execution_time = time.time() - start_request_time
-        
+
         return jsonify({
             "success": True,
             "message": f"Successfully terminated {terminated_count} instance(s) of {process_name}",
@@ -256,7 +298,7 @@ def start_from_shortcut():
 
 @app.route('/start-direct', methods=['POST'])
 def start_direct():
-    """Endpoint to start BitcrackRandomiser.exe directly from its specified path"""
+    """Endpoint to start BitcrackRandomiser.exe directly from its specified path - with duplicate prevention"""
     # Auth token validation
     auth_header = request.headers.get('Authorization')
     if not verify_auth_token(auth_header):
@@ -267,7 +309,7 @@ def start_direct():
 
     start_request_time = time.time()
     data = request.json
-    
+
     if not data or 'program_name' not in data:
         statistics["total_requests"] += 1
         statistics["failed_requests"] += 1
@@ -282,6 +324,22 @@ def start_direct():
         statistics["total_requests"] += 1
         statistics["failed_requests"] += 1
         return jsonify({"error": f"Program {program_name} is not allowed to be started"}), 403
+
+    # NEU: Überprüfe, ob der Prozess bereits läuft
+    is_running, running_pids = is_process_running(program_name)
+    if is_running:
+        logger.warning(f"Process {program_name} is already running with PIDs: {running_pids}")
+        statistics["total_requests"] += 1
+        statistics["failed_requests"] += 1
+        statistics["duplicate_prevention_blocks"] += 1
+
+        return jsonify({
+            "success": False,
+            "message": f"Process {program_name} is already running",
+            "already_running": True,
+            "running_pids": running_pids,
+            "suggestion": "Use /kill-process to terminate existing instances first, then start again"
+        }), 409  # HTTP 409 Conflict
 
     # Check if the specified path exists
     if not os.path.exists(BITCRACK_EXE_PATH):
@@ -298,7 +356,7 @@ def start_direct():
         working_dir = os.path.dirname(BITCRACK_EXE_PATH)
         logger.info(f"Starting {BITCRACK_EXE_PATH} in working directory {working_dir}")
 
-        # KORRIGIERT: Für GUI-Anwendungen verwenden wir CREATE_NEW_CONSOLE statt DETACHED_PROCESS
+        # Für GUI-Anwendungen verwenden wir CREATE_NEW_CONSOLE statt DETACHED_PROCESS
         # Windows Creation Flags:
         # CREATE_NEW_CONSOLE = 0x00000010 (Erstellt neue Console für GUI-Apps)
         # CREATE_NEW_PROCESS_GROUP = 0x00000200 (Neue Prozessgruppe)
@@ -308,13 +366,12 @@ def start_direct():
             cwd=working_dir,
             creationflags=0x00000210,  # CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP
             shell=False,
-            # Entfernt: stdin/stdout/stderr Redirection für GUI-Apps
             # GUI-Anwendungen benötigen ihre Standard-Handles
         )
 
         # Wait a short moment to check if process started successfully
         time.sleep(0.5)
-        
+
         # Check if process is still running
         if process.poll() is None:
             # Process is still running - success!
@@ -324,7 +381,7 @@ def start_direct():
             execution_time = time.time() - start_request_time
 
             logger.info(f"Successfully started {program_name} with PID {process.pid}")
-            
+
             return jsonify({
                 "success": True,
                 "message": f"Successfully started {program_name}",
@@ -333,7 +390,8 @@ def start_direct():
                 "working_directory": working_dir,
                 "execution_time_seconds": execution_time,
                 "note": "Process is running with new console and will persist independently",
-                "creation_flags": "CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP"
+                "creation_flags": "CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP",
+                "duplicate_check": "Passed - no existing instance found"
             })
         else:
             # Process exited immediately - error
@@ -341,7 +399,7 @@ def start_direct():
             logger.error(f"Process {program_name} exited immediately with code {exit_code}")
             statistics["total_requests"] += 1
             statistics["failed_requests"] += 1
-            
+
             return jsonify({
                 "success": False,
                 "message": f"Process {program_name} started but exited immediately",
@@ -354,7 +412,7 @@ def start_direct():
         logger.error(f"Error starting program: {e}")
         statistics["total_requests"] += 1
         statistics["failed_requests"] += 1
-        
+
         return jsonify({
             "success": False,
             "message": f"Failed to start {program_name}: {str(e)}",
@@ -368,22 +426,24 @@ if __name__ == "__main__":
              _   ___                
             (_) /   |               
   __ _ _ __  _ / /| |_ __ ___   ___ 
- / _` | '_ \| / /_| | '_ ` _ \ / _ \\
-| (_| | |_) | \\___  | | | | | |  __/
- \\__,_| .__/|_|   |_/_| |_| |_|\\___|
+ / _` | '_ \| / /_| | '_ ` _ \ / _ \
+| (_| | |_) | \___  | | | | | |  __/
+ \__,_| .__/|_|   |_/_| |_| |_|\___| 
       | |                           
       |_|
 
-Windows Process API Server v2.0
+Windows Process API Server v2.1
 ================================
 Sichere HTTP-API für Prozesssteuerung
-    """)
-    
+- Erweitert um Prozess-Duplikation-Schutz
+""")
+
     logger.info(f"Process API Server starting...")
     logger.info(f"BitCrack executable path: {BITCRACK_EXE_PATH}")
     logger.info(f"Allowed IPs: {ALLOWED_IPS}")
     logger.info(f"Allowed termination processes: {ALLOWED_TERMINATION_PROCESSES}")
     logger.info(f"Allowed start programs: {ALLOWED_START_PROGRAMS}")
+    logger.info(f"NEW FEATURE: Duplicate process prevention enabled")
 
     # Import waitress for production server
     try:
@@ -391,7 +451,8 @@ Sichere HTTP-API für Prozesssteuerung
         logger.info("Starting production server with Waitress...")
         logger.info("Werkzeug development server warning eliminated!")
         logger.info("GUI process support: CREATE_NEW_CONSOLE enabled")
-        
+        logger.info("Duplicate prevention: Active")
+
         # Serve on all interfaces but IP is restricted by validation middleware
         serve(app, host="0.0.0.0", port=8080, threads=6, connection_limit=100)
     except ImportError:
